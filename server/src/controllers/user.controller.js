@@ -71,12 +71,12 @@ export const registerUser = asyncHandler(async (req, res) => {
     throw new ApiError(409, "Username is already taken");
   }
 
-  const hashedPassword = await bcrypt.hash(password, 12);
+  // const hashedPassword = await bcrypt.hash(password, 12);
 
   const user = await User.create({
     username: normalizedUsername,
     email: normalizedEmail,
-    password: hashedPassword,
+    password,
   });
 
   const token = createToken(user._id);
@@ -107,7 +107,7 @@ export const loginUser = asyncHandler(async (req, res) => {
   }).select("+password");
 
   // Use the same message for an unknown email and wrong password.
-  if (!user || !(await bcrypt.compare(password, user.password))) {
+  if (!user || !(await user.comparePassword(password))) {
     throw new ApiError(401, "Invalid email or password");
   }
 
