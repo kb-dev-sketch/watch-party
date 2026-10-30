@@ -8,14 +8,18 @@ let io;
 
 const userChannel = (userId) => `user:${userId}`;
 const roomChannel = (roomCode) => `room:${roomCode.toUpperCase()}`;
+
+// Extract and validate YouTube video ID
 const extractYouTubeVideoId = (url) => {
   try {
+    if (typeof url !== "string") return null;
+
     const parsedUrl = new URL(url);
 
     let videoId = null;
 
     if (parsedUrl.hostname === "youtu.be") {
-      videoId = parsedUrl.pathname.slice(1);
+      videoId = parsedUrl.pathname.slice(1).split("/")[0];
     } else if (
       ["youtube.com", "www.youtube.com", "m.youtube.com"].includes(
         parsedUrl.hostname,
@@ -23,9 +27,10 @@ const extractYouTubeVideoId = (url) => {
     ) {
       if (parsedUrl.pathname === "/watch") {
         videoId = parsedUrl.searchParams.get("v");
-      } else if (parsedUrl.pathname.startsWith("/embed/")) {
-        videoId = parsedUrl.pathname.split("/")[2];
-      } else if (parsedUrl.pathname.startsWith("/shorts/")) {
+      } else if (
+        parsedUrl.pathname.startsWith("/embed/") ||
+        parsedUrl.pathname.startsWith("/shorts/")
+      ) {
         videoId = parsedUrl.pathname.split("/")[2];
       }
     }
@@ -66,6 +71,7 @@ const initializeSocket = (httpServer) => {
 
       next();
     } catch (error) {
+      console.error("Socket authentication error:", error.message);
       next(new Error("Invalid or expired authentication token"));
     }
   });
@@ -78,6 +84,42 @@ const initializeSocket = (httpServer) => {
 
     // Every connection joins its private user channel
     socket.join(userChannel(userId));
+
+    // Verify whether current user is Host or Moderator
+    const verifyHost = async (roomCode) => {
+      if (typeof roomCode !== "string" || !roomCode.trim()) {
+        return null;
+      }
+
+      const normalizedCode = roomCode.trim().toUpperCase();
+      const channel = roomChannel(normalizedCode);
+
+      // Socket must be connected to this room
+      if (!socket.rooms.has(channel)) {
+        return null;
+      }
+
+      const room = await Room.findOne({
+        roomCode: normalizedCode,
+        isActive: true,
+      }).select("host participants moderators roomCode");
+
+      if (!room) return null;
+
+      const isParticipant = room.participants.some(
+        (id) => id.toString() === userId,
+      );
+
+      if (!isParticipant) return null;
+
+      const isHost = room.host.toString() === userId;
+
+      const isModerator = room.moderators.some(
+        (id) => id.toString() === userId,
+      );
+
+      return isHost || isModerator ? room : null;
+    };
 
     // 3. Join an approved Watch Party
     socket.on("join-room", async (roomCode, callback) => {
@@ -118,22 +160,30 @@ const initializeSocket = (httpServer) => {
 
         const channel = roomChannel(normalizedCode);
 
-        // Prevent duplicate join notifications
         const alreadyJoined = socket.rooms.has(channel);
+
         await socket.join(channel);
+
+        // Calculate current playback position
         const elapsedSeconds =
           room.playbackState === "playing"
-            ? (Date.now() - new Date(room.lastPlaybackUpdate).getTime()) / 1000
+            ? Math.max(
+                0,
+                (Date.now() - new Date(room.lastPlaybackUpdate).getTime()) /
+                  1000,
+              )
             : 0;
 
         const syncedTime = room.currentTime + elapsedSeconds;
+
+        // Send current state to joining user
         socket.emit("sync-state", {
           videoUrl: room.videoUrl,
           playbackState: room.playbackState,
-          currentTime: room.currentTime,
-          updatedAt: room.lastPlaybackUpdate,
           currentTime: syncedTime,
+          updatedAt: room.lastPlaybackUpdate,
         });
+
         if (!alreadyJoined) {
           socket.to(channel).emit("user-joined", {
             userId,
@@ -172,8 +222,6 @@ const initializeSocket = (httpServer) => {
           roomCode: normalizedCode,
         }).select("participants");
 
-        // A user cannot leave the socket channel while
-        // they are still an approved database participant.
         const stillParticipant = room?.participants.some(
           (id) => id.toString() === userId,
         );
@@ -210,157 +258,591 @@ const initializeSocket = (httpServer) => {
         });
       }
     });
-    const normalizedCode = roomCode.trim().toUpperCase();
-    const channel = roomChannel(normalizedCode);
 
-    if (!socket.rooms.has(channel)) return null;
-    const verifyHost = async (roomCode) => {
-      if (typeof roomCode !== "string" || !roomCode.trim()) {
-        return null;
-      }
+    // 5. Participant requests playback control
+    socket.on(
+      "request-control",
+      async ({ roomCode, action, payload = {} } = {}, callback) => {
+        try {
+          if (typeof roomCode !== "string" || !roomCode.trim()) {
+            return callback?.({
+              success: false,
+              message: "Valid room code is required",
+            });
+          }
 
-      const room = await Room.findOne({
-        roomCode: roomCode.trim().toUpperCase(),
-        isActive: true,
-      }).select("host participants moderators roomCode");
+          const normalizedCode = roomCode.trim().toUpperCase();
 
-      if (!room) return null;
+          if (!socket.rooms.has(roomChannel(normalizedCode))) {
+            return callback?.({
+              success: false,
+              message: "You are not connected to this room",
+            });
+          }
 
-      const userId = socket.user._id.toString();
+          const room = await Room.findOne({
+            roomCode: normalizedCode,
+            isActive: true,
+          });
 
-      const isParticipant = room.participants.some(
-        (id) => id.toString() === userId,
-      );
+          if (!room) {
+            return callback?.({
+              success: false,
+              message: "Room not found",
+            });
+          }
 
-      if (!isParticipant) return null;
+          const isParticipant = room.participants.some(
+            (id) => id.toString() === userId,
+          );
 
-      const isHost = room.host.toString() === userId;
+          if (!isParticipant) {
+            return callback?.({
+              success: false,
+              message: "You are not a room participant",
+            });
+          }
 
-      const isModerator = room.moderators.some(
-        (id) => id.toString() === userId,
-      );
+          const isHost = room.host.toString() === userId;
 
-      return isHost || isModerator ? room : null;
-    };
+          const isModerator = room.moderators.some(
+            (id) => id.toString() === userId,
+          );
 
-    socket.on("play-video", async ({ roomCode, currentTime }, callback) => {
+          if (isHost || isModerator) {
+            return callback?.({
+              success: false,
+              message: "You already have playback control permission",
+            });
+          }
+
+          const allowedActions = ["play", "pause", "seek", "change-video"];
+
+          if (!allowedActions.includes(action)) {
+            return callback?.({
+              success: false,
+              message: "Invalid control action",
+            });
+          }
+
+          // Prepare a validated payload
+          let requestPayload = {};
+
+          if (action === "play" || action === "pause") {
+            if (payload.currentTime !== undefined) {
+              const time = Number(payload.currentTime);
+
+              if (!Number.isFinite(time) || time < 0) {
+                return callback?.({
+                  success: false,
+                  message: "Invalid playback time",
+                });
+              }
+
+              requestPayload.currentTime = time;
+            }
+          }
+
+          if (action === "seek") {
+            const time = Number(payload.currentTime);
+
+            if (!Number.isFinite(time) || time < 0) {
+              return callback?.({
+                success: false,
+                message: "Invalid seek time",
+              });
+            }
+
+            requestPayload.currentTime = time;
+          }
+
+          if (action === "change-video") {
+            const videoId = extractYouTubeVideoId(payload.videoUrl);
+
+            if (!videoId) {
+              return callback?.({
+                success: false,
+                message: "Valid YouTube video URL is required",
+              });
+            }
+
+            requestPayload.videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+          }
+
+          room.controlRequests = room.controlRequests || [];
+
+          // Prevent duplicate pending requests for the same action
+          const existingRequest = room.controlRequests.find(
+            (request) =>
+              request.requester.toString() === userId &&
+              request.action === action &&
+              request.status === "pending",
+          );
+
+          if (existingRequest) {
+            return callback?.({
+              success: false,
+              message: "You already have a pending request for this action",
+            });
+          }
+
+          const controlRequest = {
+            requester: socket.user._id,
+            action,
+            payload: requestPayload,
+            status: "pending",
+            requestedAt: new Date(),
+          };
+
+          room.controlRequests.push(controlRequest);
+
+          await room.save();
+
+          const savedRequest =
+            room.controlRequests[room.controlRequests.length - 1];
+
+          const requestData = {
+            requestId: savedRequest._id,
+            roomCode: room.roomCode,
+            requester: {
+              userId,
+              username: socket.user.username,
+            },
+            action,
+            payload: requestPayload,
+            status: "pending",
+            requestedAt: savedRequest.requestedAt,
+          };
+
+          // Notify Host privately
+          io.to(userChannel(room.host.toString())).emit(
+            "control-request-received",
+            requestData,
+          );
+
+          // Notify Moderators privately
+          room.moderators.forEach((moderatorId) => {
+            io.to(userChannel(moderatorId.toString())).emit(
+              "control-request-received",
+              requestData,
+            );
+          });
+
+          callback?.({
+            success: true,
+            message: "Control request sent successfully",
+            data: requestData,
+          });
+        } catch (error) {
+          console.error("Control request error:", error);
+
+          callback?.({
+            success: false,
+            message: "Unable to send control request",
+          });
+        }
+      },
+    );
+
+    // 6. Get pending control requests (Host / Moderator only)
+    socket.on("get-pending-control-requests", async (roomCode, callback) => {
       try {
         const room = await verifyHost(roomCode);
 
         if (!room) {
           return callback?.({
             success: false,
-            message: "Only the host or moderator can control playback",
+            message: "Only Host or Moderator can view control requests",
           });
         }
 
-        const time = Number(currentTime);
+        const fullRoom = await Room.findById(room._id)
+          .populate("controlRequests.requester", "username")
+          .populate("controlRequests.reviewedBy", "username");
 
-        if (!Number.isFinite(time) || time < 0) {
-          return callback?.({
-            success: false,
-            message: "Invalid playback time",
-          });
-        }
+        const pendingRequests = fullRoom.controlRequests
+          .filter((request) => request.status === "pending")
+          .map((request) => ({
+            requestId: request._id,
+            requester: request.requester,
+            action: request.action,
+            payload: request.payload,
+            status: request.status,
+            requestedAt: request.requestedAt,
+          }));
 
-        room.playbackState = "playing";
-        room.currentTime = time;
-        room.lastPlaybackUpdate = new Date();
-
-        await room.save();
-
-        socket.to(roomChannel(room.roomCode)).emit("video-played", {
-          currentTime: time,
-          playbackState: "playing",
-          updatedAt: room.lastPlaybackUpdate,
+        callback?.({
+          success: true,
+          data: pendingRequests,
         });
-
-        callback?.({ success: true });
       } catch (error) {
-        console.error("Play video error:", error);
-        callback?.({ success: false, message: "Playback failed" });
+        console.error("Get pending requests error:", error);
+
+        callback?.({
+          success: false,
+          message: "Unable to fetch pending requests",
+        });
       }
     });
 
-    socket.on("pause-video", async ({ roomCode, currentTime }, callback) => {
-      try {
-        const room = await verifyHost(roomCode);
+    // 7. Approve control request
+    socket.on(
+      "approve-control",
+      async ({ roomCode, requestId } = {}, callback) => {
+        try {
+          const room = await verifyHost(roomCode);
 
-        if (!room) {
-          return callback?.({
+          if (!room) {
+            return callback?.({
+              success: false,
+              message: "Only Host or Moderator can approve requests",
+            });
+          }
+
+          const request = room.controlRequests.id(requestId);
+
+          if (!request || request.status !== "pending") {
+            return callback?.({
+              success: false,
+              message: "Pending control request not found",
+            });
+          }
+
+          // Requester must still be a room participant
+          const requesterId = request.requester.toString();
+
+          const requesterStillMember = room.participants.some(
+            (id) => id.toString() === requesterId,
+          );
+
+          if (!requesterStillMember) {
+            request.status = "rejected";
+            request.reviewedBy = socket.user._id;
+
+            await room.save();
+
+            return callback?.({
+              success: false,
+              message: "Requester is no longer a room participant",
+            });
+          }
+
+          const { action, payload } = request;
+
+          // Execute approved action
+          if (action === "play" || action === "pause") {
+            const time = Number(payload?.currentTime ?? room.currentTime);
+
+            if (!Number.isFinite(time) || time < 0) {
+              return callback?.({
+                success: false,
+                message: "Invalid playback time",
+              });
+            }
+
+            room.playbackState = action === "play" ? "playing" : "paused";
+
+            room.currentTime = time;
+          } else if (action === "seek") {
+            const time = Number(payload?.currentTime);
+
+            if (!Number.isFinite(time) || time < 0) {
+              return callback?.({
+                success: false,
+                message: "Invalid seek time",
+              });
+            }
+
+            room.currentTime = time;
+          } else if (action === "change-video") {
+            const videoId = extractYouTubeVideoId(payload?.videoUrl);
+
+            if (!videoId) {
+              return callback?.({
+                success: false,
+                message: "Invalid YouTube video URL",
+              });
+            }
+
+            room.videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+
+            room.playbackState = "paused";
+            room.currentTime = 0;
+          } else {
+            return callback?.({
+              success: false,
+              message: "Unsupported control action",
+            });
+          }
+
+          request.status = "approved";
+          request.reviewedBy = socket.user._id;
+
+          room.lastPlaybackUpdate = new Date();
+
+          await room.save();
+
+          const channel = roomChannel(room.roomCode);
+
+          const events = {
+            play: "video-played",
+            pause: "video-paused",
+            seek: "video-seeked",
+            "change-video": "video-changed",
+          };
+
+          const eventPayload =
+            action === "change-video"
+              ? {
+                  videoUrl: room.videoUrl,
+                  videoId: extractYouTubeVideoId(room.videoUrl),
+                  currentTime: 0,
+                  playbackState: "paused",
+                  updatedAt: room.lastPlaybackUpdate,
+                }
+              : {
+                  currentTime: room.currentTime,
+                  playbackState: room.playbackState,
+                  updatedAt: room.lastPlaybackUpdate,
+                };
+
+          // Execute approved action for all room participants
+          io.to(channel).emit(events[action], eventPayload);
+
+          // Notify room about request status
+          io.to(channel).emit("control-request-updated", {
+            requestId: request._id,
+            status: "approved",
+            reviewedBy: socket.user._id,
+          });
+
+          // Notify requester privately
+          io.to(userChannel(requesterId)).emit("control-request-result", {
+            requestId: request._id,
+            roomCode: room.roomCode,
+            status: "approved",
+            action,
+            message: "Your control request was approved",
+          });
+
+          callback?.({
+            success: true,
+            message: "Control request approved and executed",
+          });
+        } catch (error) {
+          console.error("Approve control error:", error);
+
+          callback?.({
             success: false,
-            message: "Only the host or moderator can control playback",
+            message: "Unable to approve control request",
           });
         }
+      },
+    );
 
-        const time = Number(currentTime);
+    // 8. Reject control request
+    socket.on(
+      "reject-control",
+      async ({ roomCode, requestId } = {}, callback) => {
+        try {
+          const room = await verifyHost(roomCode);
 
-        if (!Number.isFinite(time) || time < 0) {
-          return callback?.({
+          if (!room) {
+            return callback?.({
+              success: false,
+              message: "Only Host or Moderator can reject requests",
+            });
+          }
+
+          const request = room.controlRequests.id(requestId);
+
+          if (!request || request.status !== "pending") {
+            return callback?.({
+              success: false,
+              message: "Pending control request not found",
+            });
+          }
+
+          request.status = "rejected";
+          request.reviewedBy = socket.user._id;
+
+          await room.save();
+
+          const requesterId = request.requester.toString();
+
+          // Notify room about request status
+          io.to(roomChannel(room.roomCode)).emit("control-request-updated", {
+            requestId: request._id,
+            status: "rejected",
+            reviewedBy: socket.user._id,
+          });
+
+          // Notify requester privately
+          io.to(userChannel(requesterId)).emit("control-request-result", {
+            requestId: request._id,
+            roomCode: room.roomCode,
+            status: "rejected",
+            action: request.action,
+            message: "Your control request was rejected",
+          });
+
+          callback?.({
+            success: true,
+            message: "Control request rejected",
+          });
+        } catch (error) {
+          console.error("Reject control error:", error);
+
+          callback?.({
             success: false,
-            message: "Invalid playback time",
+            message: "Unable to reject control request",
           });
         }
+      },
+    );
 
-        room.playbackState = "paused";
-        room.currentTime = time;
-        room.lastPlaybackUpdate = new Date();
+    // 9. Direct Play video (Host / Moderator only)
+    socket.on(
+      "play-video",
+      async ({ roomCode, currentTime } = {}, callback) => {
+        try {
+          const room = await verifyHost(roomCode);
 
-        await room.save();
+          if (!room) {
+            return callback?.({
+              success: false,
+              message: "Only the host or moderator can control playback",
+            });
+          }
 
-        socket.to(roomChannel(room.roomCode)).emit("video-paused", {
-          currentTime: time,
-          playbackState: "paused",
-          updatedAt: room.lastPlaybackUpdate,
-        });
+          const time = Number(currentTime);
 
-        callback?.({ success: true });
-      } catch (error) {
-        console.error("Pause video error:", error);
-        callback?.({ success: false, message: "Pause failed" });
-      }
-    });
-    // Seek video
-    socket.on("seek-video", async ({ roomCode, currentTime }, callback) => {
-      try {
-        const room = await verifyHost(roomCode);
+          if (!Number.isFinite(time) || time < 0) {
+            return callback?.({
+              success: false,
+              message: "Invalid playback time",
+            });
+          }
 
-        if (!room) {
-          return callback?.({
+          room.playbackState = "playing";
+          room.currentTime = time;
+          room.lastPlaybackUpdate = new Date();
+
+          await room.save();
+
+          socket.to(roomChannel(room.roomCode)).emit("video-played", {
+            currentTime: time,
+            playbackState: "playing",
+            updatedAt: room.lastPlaybackUpdate,
+          });
+
+          callback?.({ success: true });
+        } catch (error) {
+          console.error("Play video error:", error);
+
+          callback?.({
             success: false,
-            message: "Only the host or moderator can control playback",
+            message: "Playback failed",
           });
         }
+      },
+    );
 
-        const time = Number(currentTime);
+    // 10. Direct Pause video (Host / Moderator only)
+    socket.on(
+      "pause-video",
+      async ({ roomCode, currentTime } = {}, callback) => {
+        try {
+          const room = await verifyHost(roomCode);
 
-        if (!Number.isFinite(time) || time < 0) {
-          return callback?.({
+          if (!room) {
+            return callback?.({
+              success: false,
+              message: "Only the host or moderator can control playback",
+            });
+          }
+
+          const time = Number(currentTime);
+
+          if (!Number.isFinite(time) || time < 0) {
+            return callback?.({
+              success: false,
+              message: "Invalid playback time",
+            });
+          }
+
+          room.playbackState = "paused";
+          room.currentTime = time;
+          room.lastPlaybackUpdate = new Date();
+
+          await room.save();
+
+          socket.to(roomChannel(room.roomCode)).emit("video-paused", {
+            currentTime: time,
+            playbackState: "paused",
+            updatedAt: room.lastPlaybackUpdate,
+          });
+
+          callback?.({ success: true });
+        } catch (error) {
+          console.error("Pause video error:", error);
+
+          callback?.({
             success: false,
-            message: "Invalid playback time",
+            message: "Pause failed",
           });
         }
+      },
+    );
 
-        room.currentTime = time;
-        room.lastPlaybackUpdate = new Date();
+    // 11. Direct Seek video (Host / Moderator only)
+    socket.on(
+      "seek-video",
+      async ({ roomCode, currentTime } = {}, callback) => {
+        try {
+          const room = await verifyHost(roomCode);
 
-        await room.save();
+          if (!room) {
+            return callback?.({
+              success: false,
+              message: "Only the host or moderator can control playback",
+            });
+          }
 
-        socket.to(roomChannel(room.roomCode)).emit("video-changed", {
-          videoUrl: room.videoUrl,
-          videoId,
-          playbackState: "paused",
-          currentTime: 0,
-        });
+          const time = Number(currentTime);
 
-        callback?.({ success: true });
-      } catch (error) {
-        console.error("Seek video error:", error);
-        callback?.({ success: false, message: "Seek failed" });
-      }
-    });
-    // Change video
-    socket.on("change-video", async ({ roomCode, videoUrl }, callback) => {
+          if (!Number.isFinite(time) || time < 0) {
+            return callback?.({
+              success: false,
+              message: "Invalid playback time",
+            });
+          }
+
+          room.currentTime = time;
+          room.lastPlaybackUpdate = new Date();
+
+          await room.save();
+
+          socket.to(roomChannel(room.roomCode)).emit("video-seeked", {
+            currentTime: time,
+            playbackState: room.playbackState,
+            updatedAt: room.lastPlaybackUpdate,
+          });
+
+          callback?.({ success: true });
+        } catch (error) {
+          console.error("Seek video error:", error);
+
+          callback?.({
+            success: false,
+            message: "Seek failed",
+          });
+        }
+      },
+    );
+
+    // 12. Direct Change video (Host / Moderator only)
+    socket.on("change-video", async ({ roomCode, videoUrl } = {}, callback) => {
       try {
         const room = await verifyHost(roomCode);
 
@@ -371,14 +853,7 @@ const initializeSocket = (httpServer) => {
           });
         }
 
-        if (typeof videoUrl !== "string" || !videoUrl.trim()) {
-          return callback?.({
-            success: false,
-            message: "Valid video URL is required",
-          });
-        }
-
-        const videoId = extractYouTubeVideoId(videoUrl.trim());
+        const videoId = extractYouTubeVideoId(videoUrl);
 
         if (!videoId) {
           return callback?.({
@@ -386,7 +861,9 @@ const initializeSocket = (httpServer) => {
             message: "Invalid YouTube video URL",
           });
         }
+
         room.videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+
         room.playbackState = "paused";
         room.currentTime = 0;
         room.lastPlaybackUpdate = new Date();
@@ -395,16 +872,24 @@ const initializeSocket = (httpServer) => {
 
         socket.to(roomChannel(room.roomCode)).emit("video-changed", {
           videoUrl: room.videoUrl,
+          videoId,
           playbackState: "paused",
           currentTime: 0,
+          updatedAt: room.lastPlaybackUpdate,
         });
 
         callback?.({ success: true });
       } catch (error) {
         console.error("Change video error:", error);
-        callback?.({ success: false, message: "Video change failed" });
+
+        callback?.({
+          success: false,
+          message: "Video change failed",
+        });
       }
     });
+
+    // 13. Disconnect
     socket.on("disconnect", (reason) => {
       console.log(`User disconnected: ${socket.user.username}`, reason);
     });
@@ -413,7 +898,7 @@ const initializeSocket = (httpServer) => {
   return io;
 };
 
-// 5. Access the initialized Socket.IO instance
+// Access initialized Socket.IO instance
 const getIO = () => {
   if (!io) {
     throw new Error("Socket.IO has not been initialized");

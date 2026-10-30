@@ -47,6 +47,43 @@ const roomSchema = new mongoose.Schema(
         },
       },
     ],
+    controlRequests: [
+      {
+        requester: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+        },
+
+        action: {
+          type: String,
+          enum: ["play", "pause", "seek", "change-video"],
+          required: true,
+        },
+
+        payload: {
+          type: mongoose.Schema.Types.Mixed,
+          default: {},
+        },
+
+        status: {
+          type: String,
+          enum: ["pending", "approved", "rejected"],
+          default: "pending",
+        },
+
+        requestedAt: {
+          type: Date,
+          default: Date.now,
+        },
+
+        reviewedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null,
+        },
+      },
+    ],
 
     moderators: [
       {

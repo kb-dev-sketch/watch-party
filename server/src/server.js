@@ -6,7 +6,7 @@ import http from "http";
 import { Server } from "socket.io";
 import { initializeSocket } from "./sockets/socket.js";
 
-const PORT = process.env.PORT || 5006;
+const PORT = process.env.PORT || 5003;
 
 const httpServer = http.createServer(app);
 
