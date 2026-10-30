@@ -43,45 +43,6 @@ const getRoom = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, room, "Room fetched successfully"));
 });
 
-// ACTIVE ROOM
-const leaveRoom = asyncHandler(async (req, res) => {
-  const { roomCode } = req.params;
-
-  // 1. Find active room
-  const room = await Room.findOne({
-    roomCode: roomCode.toUpperCase(),
-    isActive: true,
-  });
-
-  if (!room) {
-    throw new ApiError(404, "Room not found");
-  }
-
-  // 2. Host cannot leave without transferring ownership
-  if (room.host.toString() === req.user._id.toString()) {
-    throw new ApiError(403, "Host must transfer ownership before leaving");
-  }
-
-  // 3. Check participant membership
-  const isParticipant = room.participants.some(
-    (participantId) => participantId.toString() === req.user._id.toString(),
-  );
-
-  if (!isParticipant) {
-    throw new ApiError(400, "You are not a participant of this room");
-  }
-
-  // 4. Remove participant
-  room.participants = room.participants.filter(
-    (participantId) => participantId.toString() !== req.user._id.toString(),
-  );
-
-  await room.save();
-
-  return res
-    .status(200)
-    .json(new ApiResponse(200, null, "Left room successfully"));
-});
 // request to joih room
 
 const requestToJoin = asyncHandler(async (req, res) => {
@@ -237,12 +198,136 @@ const handleJoinRequest = asyncHandler(async (req, res) => {
       ),
     );
 });
+// leave room with automatic host transfer and when no one is in room then close the room after host leave
+
+const leaveRoom = asyncHandler(async (req, res) => {
+  const { roomCode } = req.params;
+  const userId = req.user._id.toString();
+
+  // Find active room
+  const room = await Room.findOne({
+    roomCode: roomCode.toUpperCase(),
+    isActive: true,
+  });
+
+  if (!room) {
+    throw new ApiError(404, "Room not found");
+  }
+
+  // Check participant membership
+  const isParticipant = room.participants.some(
+    (id) => id.toString() === userId,
+  );
+
+  if (!isParticipant) {
+    throw new ApiError(400, "You are not a participant");
+  }
+
+  // Check whether current user is host
+  const isHost = room.host.toString() === userId;
+
+  // If host is leaving, transfer ownership
+  if (isHost) {
+    const newHost = room.participants.find((id) => id.toString() !== userId);
+
+    // If no other participant exists, close room
+    if (!newHost) {
+      room.isActive = false;
+      room.participants = [];
+
+      await room.save();
+
+      return res
+        .status(200)
+        .json(new ApiResponse(200, null, "Room closed successfully"));
+    }
+
+    // Assign new host
+    room.host = newHost;
+  }
+
+  // Remove leaving user from participants
+  room.participants = room.participants.filter(
+    (id) => id.toString() !== userId,
+  );
+
+  await room.save();
+
+  return res
+    .status(200)
+    .json(
+      new ApiResponse(
+        200,
+        null,
+        isHost
+          ? "You left the room and host ownership was transferred"
+          : "Left room successfully",
+      ),
+    );
+});
+
+// transfer host
+
+const transferHost = asyncHandler(async (req, res) => {
+  const { roomCode } = req.params;
+  const { newHostId } = req.body;
+
+  // 1. Find active room
+  const room = await Room.findOne({
+    roomCode: roomCode.toUpperCase(),
+    isActive: true,
+  });
+
+  if (!room) {
+    throw new ApiError(404, "Room not found");
+  }
+
+  // 2. Only current host can transfer ownership
+  if (room.host.toString() !== req.user._id.toString()) {
+    throw new ApiError(403, "Only current host can transfer ownership");
+  }
+
+  // 3. Validate new host ID
+  if (!newHostId) {
+    throw new ApiError(400, "New host ID is required");
+  }
+
+  // 4. Prevent transferring to yourself
+  if (newHostId === req.user._id.toString()) {
+    throw new ApiError(400, "You are already the host");
+  }
+
+  // 5. Check whether selected user is an approved participant
+  const isParticipant = room.participants.some(
+    (id) => id.toString() === newHostId.toString(),
+  );
+
+  if (!isParticipant) {
+    throw new ApiError(400, "Selected user is not a room participant");
+  }
+
+  // 6. Transfer ownership
+  room.host = newHostId;
+
+  await room.save();
+
+  return res
+    .status(200)
+    .json(
+      new ApiResponse(
+        200,
+        { newHost: room.host },
+        "Host transferred successfully",
+      ),
+    );
+});
 
 export {
   createRoom,
   getRoom,
-  leaveRoom,
   handleJoinRequest,
   getJoinRequests,
   requestToJoin,
+  leaveRoom,
+  transferHost,
 };
