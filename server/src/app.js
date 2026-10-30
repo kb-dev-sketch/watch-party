@@ -25,6 +25,8 @@ app.use("/api/v1/auth", authRoutes);
 
 // Register alongside your auth routes:
 app.use("/api/v1/rooms", roomRoutes);
+// Participant sends a join request
+
 app.use((req, res, next) => {
   next(new ApiError(404, `Route not found: ${req.method} ${req.originalUrl}`));
 });

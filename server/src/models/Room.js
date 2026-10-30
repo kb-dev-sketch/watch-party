@@ -29,7 +29,24 @@ const roomSchema = new mongoose.Schema(
         ref: "User",
       },
     ],
-
+    joinRequests: [
+      {
+        user: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+        },
+        status: {
+          type: String,
+          enum: ["pending", "approved", "rejected"],
+          default: "pending",
+        },
+        requestedAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
     videoUrl: {
       type: String,
       default: "",
