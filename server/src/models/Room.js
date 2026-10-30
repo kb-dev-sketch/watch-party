@@ -47,11 +47,34 @@ const roomSchema = new mongoose.Schema(
         },
       },
     ],
+
+    moderators: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
     videoUrl: {
       type: String,
       default: "",
     },
 
+    playbackState: {
+      type: String,
+      enum: ["playing", "paused"],
+      default: "paused",
+    },
+
+    currentTime: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    lastPlaybackUpdate: {
+      type: Date,
+      default: Date.now,
+    },
     isActive: {
       type: Boolean,
       default: true,

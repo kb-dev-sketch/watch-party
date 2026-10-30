@@ -7,7 +7,9 @@ import {
   handleJoinRequest,
   leaveRoom,
   transferHost,
-} from "../controllers/room.controller.js";
+  assignParticipantRole,
+  removeParticipant,
+} from "../controllers/Room.controller.js";
 import { verifyJWT } from "../middleware/auth.middleware.js";
 
 const router = Router();
@@ -25,4 +27,13 @@ router.get("/:roomCode/requests", verifyJWT, getJoinRequests);
 router.patch("/:roomCode/requests/:requestId", verifyJWT, handleJoinRequest);
 
 router.patch("/:roomCode/transfer-host", verifyJWT, transferHost);
+// Host assigns or changes participant role
+router.patch(
+  "/:roomCode/participants/:userId/role",
+  verifyJWT,
+  assignParticipantRole,
+);
+
+// Host removes participant
+router.delete("/:roomCode/participants/:userId", verifyJWT, removeParticipant);
 export default router;

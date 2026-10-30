@@ -32,7 +32,8 @@ const getRoom = asyncHandler(async (req, res) => {
     isActive: true,
   })
     .populate("host", "username email")
-    .populate("participants", "username");
+    .populate("participants", "username email")
+    .populate("moderators", "username");
 
   if (!room) {
     throw new ApiError(404, "Room not found");
@@ -283,7 +284,7 @@ const leaveRoom = asyncHandler(async (req, res) => {
   room.participants = room.participants.filter(
     (id) => id.toString() !== userId,
   );
-
+  room.moderators = room.moderators.filter((id) => id.toString() !== userId);
   await room.save();
   // Socket.IO: remove all active connections of leaving user
   const io = getIO();
@@ -352,7 +353,9 @@ const transferHost = asyncHandler(async (req, res) => {
 
   // 6. Transfer ownership
   room.host = newHostId;
-
+  room.moderators = room.moderators.filter(
+    (id) => id.toString() !== newHostId.toString(),
+  );
   await room.save();
 
   return res
@@ -366,6 +369,146 @@ const transferHost = asyncHandler(async (req, res) => {
     );
 });
 
+const assignParticipantRole = asyncHandler(async (req, res) => {
+  const { roomCode, userId } = req.params;
+  const { role } = req.body;
+
+  // Validate role
+  if (!["moderator", "participant"].includes(role)) {
+    throw new ApiError(400, "Role must be moderator or participant");
+  }
+
+  // Find active room
+  const room = await Room.findOne({
+    roomCode: roomCode.toUpperCase(),
+    isActive: true,
+  });
+
+  if (!room) {
+    throw new ApiError(404, "Room not found");
+  }
+
+  // Only host can assign roles
+  if (room.host.toString() !== req.user._id.toString()) {
+    throw new ApiError(403, "Only host can assign roles");
+  }
+
+  // Host role cannot be changed
+  if (room.host.toString() === userId) {
+    throw new ApiError(400, "Host role cannot be changed");
+  }
+
+  // Check participant membership
+  const isParticipant = room.participants.some(
+    (id) => id.toString() === userId,
+  );
+
+  if (!isParticipant) {
+    throw new ApiError(404, "Participant not found in this room");
+  }
+
+  // Promote or demote participant
+  if (role === "moderator") {
+    const alreadyModerator = room.moderators.some(
+      (id) => id.toString() === userId,
+    );
+
+    if (!alreadyModerator) {
+      room.moderators.push(userId);
+    }
+  } else {
+    room.moderators = room.moderators.filter((id) => id.toString() !== userId);
+  }
+
+  await room.save();
+
+  const roleData = {
+    roomCode: room.roomCode,
+    userId,
+    role,
+  };
+
+  const io = getIO();
+
+  // Notify all room participants
+  io.to(roomChannel(room.roomCode)).emit("role-updated", roleData);
+
+  // Notify the particular user
+  io.to(userChannel(userId)).emit("my-role-updated", roleData);
+
+  return res
+    .status(200)
+    .json(
+      new ApiResponse(200, roleData, `Participant role updated to ${role}`),
+    );
+});
+const removeParticipant = asyncHandler(async (req, res) => {
+  const { roomCode, userId } = req.params;
+
+  // Find active room
+  const room = await Room.findOne({
+    roomCode: roomCode.toUpperCase(),
+    isActive: true,
+  });
+
+  if (!room) {
+    throw new ApiError(404, "Room not found");
+  }
+
+  // Only host can remove participants
+  if (room.host.toString() !== req.user._id.toString()) {
+    throw new ApiError(403, "Only host can remove participants");
+  }
+
+  // Host cannot remove themselves
+  if (room.host.toString() === userId) {
+    throw new ApiError(400, "Host cannot remove themselves");
+  }
+
+  // Check participant membership
+  const isParticipant = room.participants.some(
+    (id) => id.toString() === userId,
+  );
+
+  if (!isParticipant) {
+    throw new ApiError(404, "Participant not found in this room");
+  }
+
+  // Remove participant
+  room.participants = room.participants.filter(
+    (id) => id.toString() !== userId,
+  );
+
+  // Remove moderator permission too
+  room.moderators = room.moderators.filter((id) => id.toString() !== userId);
+
+  await room.save();
+
+  const io = getIO();
+
+  const partyChannel = roomChannel(room.roomCode);
+  const privateChannel = userChannel(userId);
+
+  // Notify removed participant
+  io.to(privateChannel).emit("removed-from-room", {
+    roomCode: room.roomCode,
+    message: "You have been removed from this room by the host",
+  });
+
+  // Remove all active sockets of this user from room
+  await io.in(privateChannel).socketsLeave(partyChannel);
+
+  // Notify remaining participants
+  io.to(partyChannel).emit("participant-removed", {
+    userId,
+    roomCode: room.roomCode,
+  });
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, null, "Participant removed successfully"));
+});
+
 export {
   createRoom,
   getRoom,
@@ -374,4 +517,6 @@ export {
   requestToJoin,
   leaveRoom,
   transferHost,
+  removeParticipant,
+  assignParticipantRole,
 };
