@@ -3,7 +3,7 @@ import Room from "../models/Room.js";
 import { ApiError } from "../utils/apiError.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
-
+import { getIO, userChannel, roomChannel } from "../sockets/socket.js";
 const createRoom = asyncHandler(async (req, res) => {
   const { name, videoUrl = "" } = req.body;
 
@@ -187,7 +187,28 @@ const handleJoinRequest = asyncHandler(async (req, res) => {
   }
 
   await room.save();
+  // add socket
+  // Socket.IO actions only when request is approved
+  if (action === "approve") {
+    const io = getIO();
 
+    const privateChannel = userChannel(joinRequest.user.toString());
+    const partyChannel = roomChannel(room.roomCode);
+
+    // Add all active connections of approved user to the room
+    await io.in(privateChannel).socketsJoin(partyChannel);
+
+    // Notify approved user
+    io.to(privateChannel).emit("join-approved", {
+      roomCode: room.roomCode,
+      message: "Your join request has been approved",
+    });
+
+    // Notify existing room participants
+    io.to(partyChannel).except(privateChannel).emit("user-joined", {
+      userId: joinRequest.user,
+    });
+  }
   return res
     .status(200)
     .json(
@@ -236,6 +257,18 @@ const leaveRoom = asyncHandler(async (req, res) => {
       room.participants = [];
 
       await room.save();
+      // Socket.IO: remove all active connections of this user
+      const io = getIO();
+
+      const leavingUserChannel = userChannel(userId);
+      const watchPartyChannel = roomChannel(room.roomCode);
+
+      await io.in(leavingUserChannel).socketsLeave(watchPartyChannel);
+
+      // Notify remaining participants
+      io.to(watchPartyChannel).emit("user-left", {
+        userId,
+      });
 
       return res
         .status(200)
@@ -252,7 +285,18 @@ const leaveRoom = asyncHandler(async (req, res) => {
   );
 
   await room.save();
+  // Socket.IO: remove all active connections of leaving user
+  const io = getIO();
 
+  const leavingUserChannel = userChannel(userId);
+  const watchPartyChannel = roomChannel(room.roomCode);
+
+  await io.in(leavingUserChannel).socketsLeave(watchPartyChannel);
+
+  // Notify remaining participants
+  io.to(watchPartyChannel).emit("user-left", {
+    userId,
+  });
   return res
     .status(200)
     .json(
