@@ -15,5 +15,4 @@ router.post("/register", registerUser);
 router.post("/login", loginUser);
 router.post("/logout", logoutUser);
 router.get("/getUser", verifyJWT, getCurrentUser);
-
 export default router;
