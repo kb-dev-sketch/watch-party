@@ -4,6 +4,7 @@ import { ApiError } from "../utils/apiError.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { getIO, userChannel, roomChannel } from "../sockets/socket.js";
+import Message from "../models/Message.Model.js";
 const createRoom = asyncHandler(async (req, res) => {
   const { name, videoUrl = "" } = req.body;
 
@@ -509,6 +510,59 @@ const removeParticipant = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, null, "Participant removed successfully"));
 });
 
+export const getRoomMessages = asyncHandler(async (req, res) => {
+  const { roomCode } = req.params;
+
+  // Pagination
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 30));
+
+  const skip = (page - 1) * limit;
+
+  // 1. Find active room and verify membership
+  const room = await Room.findOne({
+    roomCode: roomCode.toUpperCase(),
+    isActive: true,
+    participants: req.user._id,
+  });
+
+  if (!room) {
+    throw new ApiError(404, "Room not found or you are not a member");
+  }
+
+  // 2. Fetch messages (latest page first)
+  const [messages, totalMessages] = await Promise.all([
+    Message.find({ room: room._id })
+      .populate("sender", "username")
+      .sort({ createdAt: -1, _id: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+
+    Message.countDocuments({ room: room._id }),
+  ]);
+
+  // 3. Reverse so messages appear oldest-to-newest
+  messages.reverse();
+
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        messages,
+        pagination: {
+          currentPage: page,
+          totalPages: Math.ceil(totalMessages / limit),
+          totalMessages,
+          limit,
+          hasNextPage: skip + messages.length < totalMessages,
+          hasPreviousPage: page > 1,
+        },
+      },
+      "Room messages fetched successfully",
+    ),
+  );
+});
 export {
   createRoom,
   getRoom,

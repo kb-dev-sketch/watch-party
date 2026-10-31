@@ -9,6 +9,7 @@ import {
   transferHost,
   assignParticipantRole,
   removeParticipant,
+  getRoomMessages,
 } from "../controllers/Room.controller.js";
 import { verifyJWT } from "../middleware/auth.middleware.js";
 
@@ -36,4 +37,5 @@ router.patch(
 
 // Host removes participant
 router.delete("/:roomCode/participants/:userId", verifyJWT, removeParticipant);
+router.get("/:roomCode/messages", verifyJWT, getRoomMessages);
 export default router;

@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 
 import { User } from "../models/User.model.js";
 import Room from "../models/Room.js";
+import Message from "../models/Message.Model.js";
 
 let io;
 
@@ -61,7 +62,12 @@ const initializeSocket = (httpServer) => {
 
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-      const user = await User.findById(decoded._id).select("-password");
+      const userId = decoded.sub ?? decoded._id;
+      if (!userId) {
+        return next(new Error("Invalid authentication token"));
+      }
+
+      const user = await User.findById(userId).select("-password");
 
       if (!user) {
         return next(new Error("User not found"));
@@ -123,6 +129,8 @@ const initializeSocket = (httpServer) => {
 
     // 3. Join an approved Watch Party
     socket.on("join-room", async (roomCode, callback) => {
+      console.log("JOIN ROOM EVENT RECEIVED:", roomCode);
+
       try {
         if (typeof roomCode !== "string" || !roomCode.trim()) {
           return callback?.({
@@ -205,7 +213,206 @@ const initializeSocket = (httpServer) => {
         });
       }
     });
+    socket.on(
+      "send-message",
+      async ({ roomCode, text, videoTime = null } = {}, callback) => {
+        try {
+          // 1. Validate input
+          if (!roomCode || !text || !text.trim()) {
+            return callback?.({
+              success: false,
+              message: "Room code and message are required",
+            });
+          }
 
+          if (text.trim().length > 1000) {
+            return callback?.({
+              success: false,
+              message: "Message cannot exceed 1000 characters",
+            });
+          }
+
+          if (
+            videoTime !== null &&
+            (!Number.isFinite(videoTime) || videoTime < 0)
+          ) {
+            return callback?.({
+              success: false,
+              message: "Invalid video timestamp",
+            });
+          }
+
+          // 2. Verify socket is in the room
+          const channel = roomChannel(roomCode);
+
+          if (!socket.rooms.has(channel)) {
+            return callback?.({
+              success: false,
+              message: "You are not connected to this room",
+            });
+          }
+
+          // 3. Verify user is an approved participant
+          const room = await Room.findOne({
+            roomCode: roomCode.toUpperCase(),
+            isActive: true,
+            participants: socket.user._id,
+          });
+
+          if (!room) {
+            return callback?.({
+              success: false,
+              message: "You are not a member of this room",
+            });
+          }
+
+          // 4. Save message in MongoDB
+          const message = await Message.create({
+            room: room._id,
+            sender: socket.user._id,
+            text: text.trim(),
+            videoTime,
+          });
+
+          // 5. Populate sender details
+          const populatedMessage = await Message.findById(message._id).populate(
+            "sender",
+            "username",
+          );
+
+          // 6. Broadcast to everyone in the room
+          getIO().to(channel).emit("new-message", populatedMessage);
+
+          // 7. Acknowledge sender
+          callback?.({
+            success: true,
+            message: "Message sent successfully",
+            data: populatedMessage,
+          });
+        } catch (error) {
+          console.error("Send message error:", error);
+
+          callback?.({
+            success: false,
+            message: "Failed to send message",
+          });
+        }
+      },
+    );
+    socket.on(
+      "react-to-message",
+      async ({ roomCode, messageId, emoji } = {}, callback) => {
+        try {
+          const allowedEmojis = [
+            "😂",
+            "❤️",
+            "🔥",
+            "👍",
+            "👏",
+            "😍",
+            "😮",
+            "😢",
+          ];
+
+          if (!roomCode || !messageId || !allowedEmojis.includes(emoji)) {
+            return callback?.({
+              success: false,
+              message: "Invalid reaction data",
+            });
+          }
+
+          const channel = roomChannel(roomCode);
+
+          // Verify socket joined the room
+          if (!socket.rooms.has(channel)) {
+            return callback?.({
+              success: false,
+              message: "You are not connected to this room",
+            });
+          }
+
+          // Verify approved room membership
+          const room = await Room.findOne({
+            roomCode: roomCode.toUpperCase(),
+            isActive: true,
+            participants: socket.user._id,
+          });
+
+          if (!room) {
+            return callback?.({
+              success: false,
+              message: "You are not a member of this room",
+            });
+          }
+
+          // Find message belonging to this room
+          const message = await Message.findOne({
+            _id: messageId,
+            room: room._id,
+          });
+
+          if (!message) {
+            return callback?.({
+              success: false,
+              message: "Message not found",
+            });
+          }
+
+          // Check existing reaction by this user
+          const existingIndex = message.reactions.findIndex(
+            (reaction) =>
+              reaction.user.toString() === socket.user._id.toString(),
+          );
+
+          let action;
+
+          if (existingIndex !== -1) {
+            if (message.reactions[existingIndex].emoji === emoji) {
+              // Same emoji again = remove reaction
+              message.reactions.splice(existingIndex, 1);
+              action = "removed";
+            } else {
+              // Different emoji = update reaction
+              message.reactions[existingIndex].emoji = emoji;
+              action = "updated";
+            }
+          } else {
+            // Add new reaction
+            message.reactions.push({
+              user: socket.user._id,
+              emoji,
+            });
+            action = "added";
+          }
+
+          await message.save();
+
+          const updatedMessage = await Message.findById(message._id)
+            .populate("sender", "username")
+            .populate("reactions.user", "username");
+
+          // Broadcast updated reactions to room
+          getIO().to(channel).emit("message-reaction-updated", {
+            messageId: message._id,
+            reactions: updatedMessage.reactions,
+          });
+
+          return callback?.({
+            success: true,
+            action,
+            message: "Reaction updated successfully",
+            reactions: updatedMessage.reactions,
+          });
+        } catch (error) {
+          console.error("React to message error:", error);
+
+          return callback?.({
+            success: false,
+            message: "Failed to update reaction",
+          });
+        }
+      },
+    );
     // 4. Leave a Socket.IO room after REST membership removal
     socket.on("leave-room", async (roomCode, callback) => {
       try {
