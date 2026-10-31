@@ -1,8 +1,11 @@
 import { io } from "socket.io-client";
 
+const HOST_TOKEN = process.env.HOST_TOKEN;
+if (!HOST_TOKEN) throw new Error("Set HOST_TOKEN in the environment before running this script");
+
 const socket = io("http://localhost:5003", {
   auth: {
-    token: "process.env.HOST_TOKEN",
+    token: HOST_TOKEN,
   },
 });
 

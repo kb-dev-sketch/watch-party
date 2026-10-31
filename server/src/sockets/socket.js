@@ -73,10 +73,17 @@ const initializeSocket = (httpServer) => {
         return next(new Error("Invalid authentication token"));
       }
 
-      const user = await User.findById(userId).select("-password");
+      const user = await User.findById(userId).select("-password +sessionVersion");
 
       if (!user) {
         return next(new Error("User not found"));
+      }
+
+      if (!user.isEmailVerified) {
+        return next(new Error("Email verification required"));
+      }
+      if ((decoded.ver ?? 0) !== (user.sessionVersion || 0)) {
+        return next(new Error("Session expired. Please log in again"));
       }
 
       socket.user = user;

@@ -27,6 +27,12 @@ const userSchema = new mongoose.Schema(
       minlength: 8,
       select: false,
     },
+    sessionVersion: { type: Number, default: 0, select: false },
+    passwordResetTokenHash: { type: String, default: null, select: false },
+    passwordResetExpiresAt: { type: Date, default: null, select: false },
+    passwordResetSentAt: { type: Date, default: null, select: false },
+    passwordResetWindowStartedAt: { type: Date, default: null, select: false },
+    passwordResetSendCount: { type: Number, default: 0, select: false },
 
     avatarUrl: {
       type: String,
@@ -37,6 +43,13 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+
+    emailVerificationOtpHash: { type: String, select: false, default: null },
+    emailVerificationOtpExpiresAt: { type: Date, select: false, default: null },
+    emailVerificationOtpSentAt: { type: Date, select: false, default: null },
+    emailVerificationOtpWindowStartedAt: { type: Date, select: false, default: null },
+    emailVerificationOtpSendCount: { type: Number, select: false, default: 0 },
+    emailVerificationOtpFailedAttempts: { type: Number, select: false, default: 0 },
   },
   {
     timestamps: true,

@@ -33,6 +33,11 @@ export function AuthProvider({ children }) {
 
   const register = useCallback(async (details) => {
     const response = await api.post("/auth/register", details);
+    return response.data.data;
+  }, []);
+
+  const verifyEmail = useCallback(async (details) => {
+    const response = await api.post("/auth/verify-email", details);
     const nextUser = response.data.data.user;
     setUser(nextUser);
     return nextUser;
@@ -47,8 +52,8 @@ export function AuthProvider({ children }) {
   }, []);
 
   const value = useMemo(
-    () => ({ user, ready, login, register, logout, refreshUser }),
-    [user, ready, login, register, logout, refreshUser],
+    () => ({ user, ready, login, register, verifyEmail, logout, refreshUser }),
+    [user, ready, login, register, verifyEmail, logout, refreshUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

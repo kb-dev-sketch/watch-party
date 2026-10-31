@@ -14,8 +14,13 @@ export default function Signup() {
   const change = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
   const submit = async (event) => {
     event.preventDefault(); setError(""); setBusy(true);
-    try { await register(form); navigate("/my-rooms", { replace: true }); }
-    catch (requestError) { setError(getApiError(requestError)); }
+    try { await register(form); navigate("/verify-email", { replace: true, state: { email: form.email.trim() } }); }
+    catch (requestError) {
+      const message = getApiError(requestError);
+      if (message.toLowerCase().includes("could not send verification email")) {
+        navigate("/verify-email", { replace: true, state: { email: form.email.trim(), notice: message } });
+      } else setError(message);
+    }
     finally { setBusy(false); }
   };
 

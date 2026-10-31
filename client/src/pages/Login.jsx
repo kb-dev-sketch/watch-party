@@ -35,9 +35,12 @@ export default function Login() {
           <span className="field-icon"><Mail size={16} /><input id="email" className="input-dark" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" required /></span>
           <label htmlFor="password">Password</label>
           <span className="field-icon"><LockKeyhole size={16} /><input id="password" className="input-dark" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Your password" required /></span>
+          <div className="forgot-password-link"><Link to="/forgot-password">Forgot password?</Link></div>
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="button button-primary button-full" disabled={busy}>{busy ? "Logging in…" : "Log in"}</button>
         </form>
+        {location.state?.notice && <p className="form-notice" role="status">{location.state.notice}</p>}
+        {error.toLowerCase().includes("verify your email") && <p className="auth-switch"><Link to="/verify-email" state={{ email }}>Verify your email</Link> to continue.</p>}
         <p className="auth-switch">New to Watch Party? <Link to="/signup">Create an account</Link></p>
       </section>
     </main>

@@ -1,6 +1,8 @@
 import { io } from "socket.io-client";
 
-const HOST_TOKEN = "process.env.HOST_TOKEN";
+const HOST_TOKEN = process.env.HOST_TOKEN;
+if (!HOST_TOKEN) throw new Error("Set HOST_TOKEN in the environment before running this script");
+
 const ROOM_CODE = "CB534995";
 
 const socket = io("http://localhost:5003", {
@@ -12,7 +14,7 @@ const socket = io("http://localhost:5003", {
 socket.on("connect", () => {
   console.log("Connected:", socket.id);
 
-  socket.emit("join-room", { roomCode: "CB534995" }, (response) => {
+  socket.emit("join-room", ROOM_CODE, (response) => {
     console.log("Join response:", response);
   });
 });
