@@ -40,7 +40,6 @@ export default function Login() {
           <button className="button button-primary button-full" disabled={busy}>{busy ? "Logging in…" : "Log in"}</button>
         </form>
         {location.state?.notice && <p className="form-notice" role="status">{location.state.notice}</p>}
-        {error.toLowerCase().includes("verify your email") && <p className="auth-switch"><Link to="/verify-email" state={{ email }}>Verify your email</Link> to continue.</p>}
         <p className="auth-switch">New to Watch Party? <Link to="/signup">Create an account</Link></p>
       </section>
     </main>

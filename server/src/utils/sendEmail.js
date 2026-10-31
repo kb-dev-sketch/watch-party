@@ -15,19 +15,6 @@ const getTransporter = () => {
   return transporter;
 };
 
-export async function sendVerificationEmail({ email, username, otp }) {
-  const safeUsername = username.replace(/[&<>"']/g, (character) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  })[character]);
-  await getTransporter().sendMail({
-    from: `Watch Party <${process.env.EMAIL_USER}>`,
-    to: email,
-    subject: "Verify your Watch Party email",
-    text: `Hi ${username}, your Watch Party verification code is ${otp}. It expires in 5 minutes. If you did not create this account, you can ignore this email.`,
-    html: `<p>Hi ${safeUsername},</p><p>Your Watch Party verification code is:</p><p style="font-size:28px;font-weight:bold;letter-spacing:6px">${otp}</p><p>This code expires in 5 minutes. If you did not create this account, you can ignore this email.</p>`,
-  });
-}
-
 export async function sendPasswordResetEmail({ email, username, resetUrl }) {
   const safeUsername = username.replace(/[&<>"']/g, (character) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",

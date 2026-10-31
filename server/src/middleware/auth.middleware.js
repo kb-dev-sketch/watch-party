@@ -33,9 +33,6 @@ export const verifyJWT = asyncHandler(async (req, res, next) => {
     throw new ApiError(401, "User account not found");
   }
 
-  if (!user.isEmailVerified) {
-    throw new ApiError(403, "Verify your email before accessing your account");
-  }
   if ((decoded.ver ?? 0) !== (user.sessionVersion || 0)) {
     throw new ApiError(401, "Session expired. Please log in again");
   }
