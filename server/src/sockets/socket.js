@@ -840,13 +840,20 @@ const initializeSocket = (httpServer) => {
       "approve-control",
       async ({ roomCode, requestId } = {}, callback) => {
         try {
-          const room = await verifyHost(roomCode);
+          const authorizedRoom = await verifyHost(roomCode);
 
-          if (!room) {
+          if (!authorizedRoom) {
             return callback?.({
               success: false,
               message: "Only Host or Moderator can approve requests",
             });
+          }
+
+          // verifyHost returns a projection for authorization; reload the full document
+          // because approval reads the pending request and current playback state.
+          const room = await Room.findById(authorizedRoom._id);
+          if (!room) {
+            return callback?.({ success: false, message: "Room not found" });
           }
 
           const request = room.controlRequests.id(requestId);
@@ -995,13 +1002,18 @@ const initializeSocket = (httpServer) => {
       "reject-control",
       async ({ roomCode, requestId } = {}, callback) => {
         try {
-          const room = await verifyHost(roomCode);
+          const authorizedRoom = await verifyHost(roomCode);
 
-          if (!room) {
+          if (!authorizedRoom) {
             return callback?.({
               success: false,
               message: "Only Host or Moderator can reject requests",
             });
+          }
+
+          const room = await Room.findById(authorizedRoom._id);
+          if (!room) {
+            return callback?.({ success: false, message: "Room not found" });
           }
 
           const request = room.controlRequests.id(requestId);

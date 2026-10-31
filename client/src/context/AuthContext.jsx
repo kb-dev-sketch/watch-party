@@ -38,8 +38,6 @@ export function AuthProvider({ children }) {
     return nextUser;
   }, []);
 
-
-
   const logout = useCallback(async () => {
     try {
       await api.post("/auth/logout");

@@ -7,7 +7,7 @@ The client is deployed as a Vite SPA on Vercel. The Express and Socket.IO server
 1. Push this repository to GitHub and create a Render Blueprint from its root `render.yaml`.
 2. Set `MONGODB_URI` to the production MongoDB connection string.
 3. Set `CLIENT_URL` to the exact Vercel production origin (for example, `https://watch-party.vercel.app`).
-4. Set `EMAIL_USER` and `EMAIL_PASS` to the Gmail account and its 16-character Google App Password.
+4. Configure `EMAIL_USER` and `EMAIL_PASS` only if you want password-reset emails. Render free services block outbound SMTP; use a paid service or an email provider API for password resets.
 5. Keep the generated `JWT_SECRET` private. Render uses `/api/health` as the service health check.
 
 The API and Socket.IO server share the same Render origin. The frontend must use that origin for both configured URLs.
@@ -27,7 +27,7 @@ The Blueprint uses Render's free plan for an initial deployment. Free services c
 
 4. Deploy the client, copy its production origin into Render's `CLIENT_URL`, then redeploy the API.
 
-The `client/vercel.json` rewrite keeps React Router paths such as `/verify-email` and `/reset-password` working on direct visits.
+The `client/vercel.json` rewrite keeps React Router paths such as `/reset-password` working on direct visits.
 
 ## Cookie and domain note
 

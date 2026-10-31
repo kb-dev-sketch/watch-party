@@ -132,11 +132,7 @@ const requestToJoin = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Your request is already pending");
   }
 
-  if (existingRequest?.status === "approved") {
-    throw new ApiError(400, "Your request is already approved");
-  }
-
-  // Reuse a previously rejected request
+  // A stale approval after a participant leaves or is removed requires fresh host approval.
   if (existingRequest) {
     existingRequest.status = "pending";
     existingRequest.requestedAt = new Date();
@@ -349,6 +345,10 @@ const leaveRoom = asyncHandler(async (req, res) => {
     (id) => id.toString() !== userId,
   );
   room.moderators = room.moderators.filter((id) => id.toString() !== userId);
+  const previousJoinRequest = room.joinRequests.find(
+    (request) => request.user.toString() === userId,
+  );
+  if (previousJoinRequest) previousJoinRequest.status = "rejected";
   await room.save();
   // Socket.IO: remove all active connections of leaving user
   const io = getIO();
@@ -550,8 +550,12 @@ const removeParticipant = asyncHandler(async (req, res) => {
     (id) => id.toString() !== userId,
   );
 
-  // Remove moderator permission too
+  // Remove moderator permission and revoke the previous room approval.
   room.moderators = room.moderators.filter((id) => id.toString() !== userId);
+  const previousJoinRequest = room.joinRequests.find(
+    (request) => request.user.toString() === userId,
+  );
+  if (previousJoinRequest) previousJoinRequest.status = "rejected";
 
   await room.save();
 
