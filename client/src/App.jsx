@@ -7,6 +7,7 @@ import Signup from "./pages/Signup";
 import MyRooms from "./pages/MyRooms";
 import Discover from "./pages/Discover";
 import WatchRoom from "./pages/WatchRoom";
+import RequireAuth from "./components/RequireAuth";
 
 function App() {
   return (
@@ -14,9 +15,12 @@ function App() {
       <Route path="/" element={<Home />} />
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
-      <Route path="/my-rooms" element={<MyRooms />} />
-      <Route path="/discover" element={<Discover />} />
-      <Route path="/room/:roomCode" element={<WatchRoom />} />
+      <Route element={<RequireAuth />}>
+        <Route path="/my-rooms" element={<MyRooms />} />
+        <Route path="/discover" element={<Discover />} />
+        <Route path="/room/:roomCode" element={<WatchRoom />} />
+      </Route>
+      <Route path="*" element={<Home />} />
     </Routes>
   );
 }

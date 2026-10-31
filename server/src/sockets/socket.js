@@ -54,7 +54,13 @@ const initializeSocket = (httpServer) => {
   // 1. Authenticate every socket connection
   io.use(async (socket, next) => {
     try {
-      const token = socket.handshake.auth?.token;
+      const cookieToken = socket.handshake.headers.cookie
+        ?.split(";")
+        .map((cookie) => cookie.trim())
+        .find((cookie) => cookie.startsWith("watchparty_token="))
+        ?.slice("watchparty_token=".length);
+      const token = socket.handshake.auth?.token ||
+        (cookieToken ? decodeURIComponent(cookieToken) : null);
 
       if (!token) {
         return next(new Error("Authentication token required"));
@@ -275,10 +281,9 @@ const initializeSocket = (httpServer) => {
           });
 
           // 5. Populate sender details
-          const populatedMessage = await Message.findById(message._id).populate(
-            "sender",
-            "username",
-          );
+          const populatedMessage = await Message.findById(message._id)
+            .populate("sender", "username")
+            .populate("reactions.user", "username");
 
           // 6. Broadcast to everyone in the room
           getIO().to(channel).emit("new-message", populatedMessage);
@@ -413,6 +418,140 @@ const initializeSocket = (httpServer) => {
         }
       },
     );
+
+    socket.on("add-video-to-queue", async ({ roomCode, videoUrl, title = "" } = {}, callback) => {
+      try {
+        if (typeof roomCode !== "string" || !roomCode.trim()) {
+          return callback?.({ success: false, message: "Valid room code is required" });
+        }
+        if (typeof title !== "string" || title.trim().length > 120) {
+          return callback?.({ success: false, message: "Video title must be 120 characters or fewer" });
+        }
+
+        const normalizedCode = roomCode.trim().toUpperCase();
+        const channel = roomChannel(normalizedCode);
+        if (!socket.rooms.has(channel)) {
+          return callback?.({ success: false, message: "You are not connected to this room" });
+        }
+
+        const videoId = extractYouTubeVideoId(videoUrl);
+        if (!videoId) {
+          return callback?.({ success: false, message: "Valid YouTube video URL is required" });
+        }
+
+        const room = await Room.findOne({
+          roomCode: normalizedCode,
+          isActive: true,
+          participants: socket.user._id,
+        });
+        if (!room) {
+          return callback?.({ success: false, message: "You are not a member of this room" });
+        }
+
+        room.videoQueue.push({
+          videoId,
+          videoUrl: `https://www.youtube.com/watch?v=${videoId}`,
+          title: title.trim(),
+          addedBy: socket.user._id,
+        });
+        await room.save();
+
+        const populatedRoom = await Room.findById(room._id).populate("videoQueue.addedBy", "username");
+        io.to(channel).emit("video-queue-updated", {
+          roomCode: normalizedCode,
+          queue: populatedRoom.videoQueue,
+        });
+        callback?.({ success: true, queue: populatedRoom.videoQueue });
+      } catch (error) {
+        console.error("Add video to queue error:", error);
+        callback?.({ success: false, message: "Could not add video to queue" });
+      }
+    });
+
+    socket.on("remove-video-from-queue", async ({ roomCode, queueItemId } = {}, callback) => {
+      try {
+        if (typeof roomCode !== "string" || typeof queueItemId !== "string") {
+          return callback?.({ success: false, message: "Room code and queue item are required" });
+        }
+        const normalizedCode = roomCode.trim().toUpperCase();
+        const channel = roomChannel(normalizedCode);
+        if (!socket.rooms.has(channel)) {
+          return callback?.({ success: false, message: "You are not connected to this room" });
+        }
+
+        const room = await Room.findOne({
+          roomCode: normalizedCode,
+          isActive: true,
+          participants: socket.user._id,
+        });
+        if (!room) {
+          return callback?.({ success: false, message: "You are not a member of this room" });
+        }
+
+        const item = room.videoQueue.id(queueItemId);
+        if (!item) {
+          return callback?.({ success: false, message: "Queue item not found" });
+        }
+        const hasQueueControl =
+          room.host.toString() === userId ||
+          room.moderators.some((moderatorId) => moderatorId.toString() === userId);
+        if (!hasQueueControl && item.addedBy.toString() !== userId) {
+          return callback?.({ success: false, message: "Only the host, moderator, or video requester can remove this item" });
+        }
+
+        item.deleteOne();
+        await room.save();
+        const populatedRoom = await Room.findById(room._id).populate("videoQueue.addedBy", "username");
+        io.to(channel).emit("video-queue-updated", {
+          roomCode: normalizedCode,
+          queue: populatedRoom.videoQueue,
+        });
+        callback?.({ success: true, queue: populatedRoom.videoQueue });
+      } catch (error) {
+        console.error("Remove video from queue error:", error);
+        callback?.({ success: false, message: "Could not remove video from queue" });
+      }
+    });
+
+    socket.on("play-next-video", async ({ roomCode } = {}, callback) => {
+      try {
+        const authorizedRoom = await verifyHost(roomCode);
+        if (!authorizedRoom) {
+          return callback?.({ success: false, message: "Only the host or a moderator can play the next video" });
+        }
+
+        const room = await Room.findById(authorizedRoom._id);
+        if (!room.videoQueue.length) {
+          return callback?.({ success: false, message: "The video queue is empty" });
+        }
+
+        const nextVideo = room.videoQueue.shift();
+        room.videoUrl = nextVideo.videoUrl;
+        room.playbackState = "paused";
+        room.currentTime = 0;
+        room.lastPlaybackUpdate = new Date();
+        await room.save();
+
+        const populatedRoom = await Room.findById(room._id).populate("videoQueue.addedBy", "username");
+        const channel = roomChannel(room.roomCode);
+        io.to(channel).emit("video-changed", {
+          videoUrl: room.videoUrl,
+          videoId: nextVideo.videoId,
+          playbackState: "paused",
+          currentTime: 0,
+          updatedAt: room.lastPlaybackUpdate,
+        });
+        io.to(channel).emit("video-queue-updated", {
+          roomCode: room.roomCode,
+          queue: populatedRoom.videoQueue,
+        });
+        callback?.({ success: true, videoUrl: room.videoUrl, queue: populatedRoom.videoQueue });
+      } catch (error) {
+        console.error("Play next video error:", error);
+        callback?.({ success: false, message: "Could not play the next video" });
+      }
+    });
+
     // 4. Leave a Socket.IO room after REST membership removal
     socket.on("leave-room", async (roomCode, callback) => {
       try {

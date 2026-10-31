@@ -1,16 +1,17 @@
-# React + Vite
+# Watch Party client
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React and Vite client for the Watch Party API.
 
-Currently, two official plugins are available:
+## Local setup
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+1. Copy `.env.example` to `.env` and set `VITE_API_URL` and `VITE_SOCKET_URL` for your backend.
+2. Install dependencies with `npm install`.
+3. Start the client with `npm run dev`.
 
-## React Compiler
+The client uses the backend's HTTP only `watchparty_token` cookie for API and Socket.IO authentication. Configure the backend `CLIENT_URL` to match the client origin and enable credentialed CORS.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Rooms are invite-only. A participant must enter a room code and receive host approval before joining; rooms are not listed publicly.
 
-## Expanding the ESLint configuration
+## Production build
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+Set the two Vite environment variables to the deployed API and Socket.IO origins, then run `npm run build`. Vite writes the static site to `dist/`.

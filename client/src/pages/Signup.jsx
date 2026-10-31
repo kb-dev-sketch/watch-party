@@ -1,155 +1,44 @@
-
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { User, Mail, Lock, Eye, EyeOff } from "lucide-react";
+import { ArrowLeft, LockKeyhole, Mail, UserRound } from "lucide-react";
+import { useAuth } from "../context/AuthContext";
+import { getApiError } from "../lib/api";
 
-const Signup = () => {
+export default function Signup() {
+  const { register } = useAuth();
   const navigate = useNavigate();
-  const [showPassword, setShowPassword] = useState(false);
+  const [form, setForm] = useState({ username: "", email: "", password: "" });
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  const [formData, setFormData] = useState({
-    username: "",
-    email: "",
-    password: "",
-    confirmPassword: "",
-  });
-
-  const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
-  };
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-
-    if (formData.password !== formData.confirmPassword) {
-      alert("Passwords do not match");
-      return;
-    }
-
-    // Demo only. Connect registration API later.
-    navigate("/login");
+  const change = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
+  const submit = async (event) => {
+    event.preventDefault(); setError(""); setBusy(true);
+    try { await register(form); navigate("/my-rooms", { replace: true }); }
+    catch (requestError) { setError(getApiError(requestError)); }
+    finally { setBusy(false); }
   };
 
   return (
-    <div className="auth-bg min-h-screen flex items-center justify-center p-4">
-      <div className="panel rounded-2xl w-full max-w-[440px] p-7 md:p-9">
-
-        <Link to="/" className="brand block text-center text-3xl mb-6">
-          WATCH PARTY
-        </Link>
-
-        <h1 className="text-2xl font-bold text-center">
-          Create Your Account
-        </h1>
-
-        <p className="text-xs text-gray-400 text-center mt-2 mb-6">
-          Join your friends and start watching together
-        </p>
-
-        <form onSubmit={handleSubmit}>
-
-          <label className="text-xs font-semibold">Username</label>
-
-          <div className="relative mt-2 mb-4">
-            <User
-              size={17}
-              className="absolute left-3 top-3.5 text-gray-500"
-            />
-
-            <input
-              name="username"
-              value={formData.username}
-              onChange={handleChange}
-              placeholder="Choose a username"
-              className="input-dark pl-10"
-              required
-            />
-          </div>
-
-          <label className="text-xs font-semibold">Email Address</label>
-
-          <div className="relative mt-2 mb-4">
-            <Mail
-              size={17}
-              className="absolute left-3 top-3.5 text-gray-500"
-            />
-
-            <input
-              type="email"
-              name="email"
-              value={formData.email}
-              onChange={handleChange}
-              placeholder="you@example.com"
-              className="input-dark pl-10"
-              required
-            />
-          </div>
-
-          <label className="text-xs font-semibold">Password</label>
-
-          <div className="relative mt-2 mb-4">
-            <Lock
-              size={17}
-              className="absolute left-3 top-3.5 text-gray-500"
-            />
-
-            <input
-              type={showPassword ? "text" : "password"}
-              name="password"
-              value={formData.password}
-              onChange={handleChange}
-              placeholder="Create a password"
-              className="input-dark pl-10 pr-11"
-              minLength={6}
-              required
-            />
-
-            <button
-              type="button"
-              onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-3 top-3.5 text-gray-500"
-              aria-label="Toggle password visibility"
-            >
-              {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
-            </button>
-          </div>
-
-          <label className="text-xs font-semibold">
-            Confirm Password
-          </label>
-
-          <input
-            type="password"
-            name="confirmPassword"
-            value={formData.confirmPassword}
-            onChange={handleChange}
-            placeholder="Confirm your password"
-            className="input-dark mt-2 mb-6"
-            required
-          />
-
-          <button
-            type="submit"
-            className="red-btn rounded-lg w-full py-3 text-sm font-bold"
-          >
-            Create Account
-          </button>
-
+    <main className="auth-page">
+      <Link to="/" className="auth-back"><ArrowLeft size={16} /> Back home</Link>
+      <section className="auth-card">
+        <Link to="/" className="brand auth-brand">WATCH PARTY</Link>
+        <span className="eyebrow">MAKE IT A MOVIE NIGHT</span>
+        <h1>Create your account</h1>
+        <p className="auth-intro">One account for all the rooms you’ll watch together.</p>
+        <form onSubmit={submit} className="form-stack">
+          <label htmlFor="username">Username</label>
+          <span className="field-icon"><UserRound size={16} /><input id="username" name="username" className="input-dark" autoComplete="username" value={form.username} onChange={change} minLength={3} maxLength={30} pattern="[A-Za-z0-9_]+" placeholder="Choose a username" required /></span>
+          <label htmlFor="email">Email address</label>
+          <span className="field-icon"><Mail size={16} /><input id="email" name="email" className="input-dark" type="email" autoComplete="email" value={form.email} onChange={change} placeholder="you@example.com" required /></span>
+          <label htmlFor="password">Password</label>
+          <span className="field-icon"><LockKeyhole size={16} /><input id="password" name="password" className="input-dark" type="password" autoComplete="new-password" value={form.password} onChange={change} minLength={8} maxLength={72} placeholder="At least 8 characters" required /></span>
+          {error && <p className="form-error" role="alert">{error}</p>}
+          <button className="button button-primary button-full" disabled={busy}>{busy ? "Creating account…" : "Create account"}</button>
         </form>
-
-        <p className="text-center text-xs text-gray-400 mt-7">
-          Already have an account?{" "}
-          <Link to="/login" className="text-red-500 font-bold">
-            Login
-          </Link>
-        </p>
-
-      </div>
-    </div>
+        <p className="auth-switch">Already have an account? <Link to="/login">Log in</Link></p>
+      </section>
+    </main>
   );
-};
-
-export default Signup;
+}

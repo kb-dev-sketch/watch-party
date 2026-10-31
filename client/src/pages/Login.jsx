@@ -1,146 +1,45 @@
-
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { Eye, EyeOff, Mail, Lock } from "lucide-react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { ArrowLeft, LockKeyhole, Mail } from "lucide-react";
+import { useAuth } from "../context/AuthContext";
+import { getApiError } from "../lib/api";
 
-const Login = () => {
+export default function Login() {
+  const { login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  const [showPassword, setShowPassword] = useState(false);
-  const [formData, setFormData] = useState({
-    email: "",
-    password: "",
-  });
-
-  const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
-  };
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-
-    if (!formData.email || !formData.password) {
-      alert("Please fill in all fields");
-      return;
-    }
-
-    // Demo only. Connect login API later.
-    navigate("/");
+  const submit = async (event) => {
+    event.preventDefault(); setError(""); setBusy(true);
+    try {
+      await login({ email, password });
+      navigate(location.state?.from?.pathname || "/my-rooms", { replace: true });
+    } catch (requestError) { setError(getApiError(requestError)); }
+    finally { setBusy(false); }
   };
 
   return (
-    <div className="auth-bg min-h-screen flex items-center justify-center p-4">
-      <div className="panel rounded-2xl w-full max-w-[430px] p-7 md:p-9">
-
-        <Link to="/" className="brand block text-center text-3xl mb-7">
-          WATCH PARTY
-        </Link>
-
-        <h1 className="text-2xl font-bold text-center">
-          Welcome Back
-        </h1>
-
-        <p className="text-xs text-gray-400 text-center mt-2 mb-7">
-          Login to continue watching together
-        </p>
-
-        <form onSubmit={handleSubmit}>
-
-          <label className="text-xs font-semibold">
-            Email Address
-          </label>
-
-          <div className="relative mt-2 mb-5">
-            <Mail
-              size={17}
-              className="absolute left-3 top-3.5 text-gray-500"
-            />
-
-            <input
-              type="email"
-              name="email"
-              value={formData.email}
-              onChange={handleChange}
-              placeholder="you@example.com"
-              className="input-dark pl-10"
-              required
-            />
-          </div>
-
-          <label className="text-xs font-semibold">
-            Password
-          </label>
-
-          <div className="relative mt-2 mb-3">
-            <Lock
-              size={17}
-              className="absolute left-3 top-3.5 text-gray-500"
-            />
-
-            <input
-              type={showPassword ? "text" : "password"}
-              name="password"
-              value={formData.password}
-              onChange={handleChange}
-              placeholder="Enter your password"
-              className="input-dark pl-10 pr-11"
-              required
-            />
-
-            <button
-              type="button"
-              onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-3 top-3.5 text-gray-500"
-              aria-label="Toggle password visibility"
-            >
-              {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
-            </button>
-          </div>
-
-          <div className="text-right mb-6">
-            <button
-              type="button"
-              className="text-xs text-red-500 hover:text-red-400"
-            >
-              Forgot password?
-            </button>
-          </div>
-
-          <button
-            type="submit"
-            className="red-btn rounded-lg w-full py-3 text-sm font-bold"
-          >
-            Login
-          </button>
-
+    <main className="auth-page">
+      <Link to="/" className="auth-back"><ArrowLeft size={16} /> Back home</Link>
+      <section className="auth-card">
+        <Link to="/" className="brand auth-brand">WATCH PARTY</Link>
+        <span className="eyebrow">YOUR WATCH SPACE AWAITS</span>
+        <h1>Welcome back</h1>
+        <p className="auth-intro">Log in to pick up where your friends are watching.</p>
+        <form onSubmit={submit} className="form-stack">
+          <label htmlFor="email">Email address</label>
+          <span className="field-icon"><Mail size={16} /><input id="email" className="input-dark" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" required /></span>
+          <label htmlFor="password">Password</label>
+          <span className="field-icon"><LockKeyhole size={16} /><input id="password" className="input-dark" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Your password" required /></span>
+          {error && <p className="form-error" role="alert">{error}</p>}
+          <button className="button button-primary button-full" disabled={busy}>{busy ? "Logging in…" : "Log in"}</button>
         </form>
-
-        <div className="flex items-center gap-3 my-6">
-          <span className="h-px bg-white/10 flex-1" />
-          <span className="text-[10px] text-gray-500">OR</span>
-          <span className="h-px bg-white/10 flex-1" />
-        </div>
-
-        <button
-          type="button"
-          className="ghost-btn rounded-lg w-full py-3 text-sm"
-        >
-          Continue with Google
-        </button>
-
-        <p className="text-center text-xs text-gray-400 mt-7">
-          Don't have an account?{" "}
-          <Link to="/signup" className="text-red-500 font-bold">
-            Sign up
-          </Link>
-        </p>
-
-      </div>
-    </div>
+        <p className="auth-switch">New to Watch Party? <Link to="/signup">Create an account</Link></p>
+      </section>
+    </main>
   );
-};
-
-export default Login;
+}

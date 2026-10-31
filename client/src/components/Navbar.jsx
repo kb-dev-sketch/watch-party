@@ -1,60 +1,39 @@
+import { LogOut } from "lucide-react";
+import { Link, NavLink, useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 
-import { Search, Bell, Menu } from "lucide-react";
-import { Link, NavLink } from "react-router-dom";
-
-const Navbar = () => {
-  const links = [
-    { name: "Home", path: "/" },
-    { name: "My Rooms", path: "/my-rooms" },
-    { name: "Discover", path: "/discover" },
-  ];
-
+export default function Navbar() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
   return (
-    <nav className="relative flex items-center justify-between gap-4 px-5 md:px-8 py-4 border-b border-white/10 bg-black/60">
-      <Link to="/" className="brand text-2xl whitespace-nowrap">
-        WATCH PARTY
-      </Link>
-
-      <div className="hidden md:flex items-center gap-6">
-        {links.map((link) => (
-          <NavLink
-            key={link.path}
-            to={link.path}
-            className={({ isActive }) =>
-              `nav-link ${isActive ? "active" : ""}`
-            }
-          >
-            {link.name}
+    <header className="topbar">
+      <Link to="/" className="brand" aria-label="Watch Party home">WATCH PARTY</Link>
+      <nav className="primary-nav" aria-label="Main navigation">
+        {[
+          ["Home", "/"],
+          ["My Rooms", "/my-rooms"],
+          ["Join a room", "/discover"],
+        ].map(([label, path]) => (
+          <NavLink key={path} end={path === "/"} to={path} className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
+            {label}
           </NavLink>
         ))}
+      </nav>
+      <div className="nav-actions">
+        {user ? (
+          <>
+            <span className="user-chip" title={user.email}>{user.username}</span>
+            <button className="icon-button" onClick={async () => { await logout(); navigate("/"); }} aria-label="Log out" title="Log out">
+              <LogOut size={17} />
+            </button>
+          </>
+        ) : (
+          <>
+            <Link className="nav-auth-link" to="/login">Log in</Link>
+            <Link className="button button-primary button-small" to="/signup">Sign up</Link>
+          </>
+        )}
       </div>
-
-      <div className="hidden lg:flex items-center gap-2 rounded-full bg-[#111317] border border-white/10 px-4 py-2 w-[300px]">
-        <Search size={16} className="text-gray-400" />
-        <input
-          placeholder="Search YouTube videos, channels, or rooms..."
-          className="bg-transparent outline-none text-xs w-full text-white placeholder:text-gray-500"
-        />
-      </div>
-
-      <div className="flex items-center gap-4">
-        <button aria-label="Notifications" className="relative">
-          <Bell size={19} />
-          <span className="absolute -right-1 -top-1 w-2 h-2 rounded-full bg-red-500" />
-        </button>
-
-        <img
-          src="https://i.pravatar.cc/100?img=11"
-          alt="Profile"
-          className="w-9 h-9 rounded-full border border-white/20"
-        />
-
-        <button className="md:hidden" aria-label="Menu">
-          <Menu />
-        </button>
-      </div>
-    </nav>
+    </header>
   );
-};
-
-export default Navbar;
+}

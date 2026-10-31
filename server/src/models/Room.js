@@ -1,5 +1,13 @@
 import mongoose from "mongoose";
 
+const videoQueueItemSchema = new mongoose.Schema({
+  videoId: { type: String, required: true, match: /^[a-zA-Z0-9_-]{11}$/ },
+  videoUrl: { type: String, required: true },
+  title: { type: String, trim: true, maxlength: 120, default: "" },
+  addedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  addedAt: { type: Date, default: Date.now },
+});
+
 const roomSchema = new mongoose.Schema(
   {
     name: {
@@ -94,6 +102,11 @@ const roomSchema = new mongoose.Schema(
     videoUrl: {
       type: String,
       default: "",
+    },
+
+    videoQueue: {
+      type: [videoQueueItemSchema],
+      default: [],
     },
 
     playbackState: {

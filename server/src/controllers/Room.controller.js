@@ -6,10 +6,14 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { getIO, userChannel, roomChannel } from "../sockets/socket.js";
 import Message from "../models/Message.Model.js";
 const createRoom = asyncHandler(async (req, res) => {
-  const { name, videoUrl = "" } = req.body;
+  const { name, videoUrl = "" } = req.body ?? {};
 
-  if (!name?.trim()) {
+  if (typeof name !== "string" || !name.trim()) {
     throw new ApiError(400, "Room name is required");
+  }
+
+  if (typeof videoUrl !== "string") {
+    throw new ApiError(400, "Video URL must be a string");
   }
 
   const roomCode = randomBytes(4).toString("hex").toUpperCase();
@@ -27,22 +31,66 @@ const createRoom = asyncHandler(async (req, res) => {
     .json(new ApiResponse(201, room, "Room created successfully"));
 });
 
+const getMyRooms = asyncHandler(async (req, res) => {
+  const rooms = await Room.find({
+    isActive: true,
+    participants: req.user._id,
+  })
+    .select("name roomCode host participants moderators videoUrl createdAt updatedAt")
+    .populate("host", "username")
+    .populate("participants", "username")
+    .sort({ updatedAt: -1 });
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, rooms, "Your rooms fetched successfully"));
+});
+
 const getRoom = asyncHandler(async (req, res) => {
   const room = await Room.findOne({
     roomCode: req.params.roomCode.toUpperCase(),
     isActive: true,
   })
-    .populate("host", "username email")
-    .populate("participants", "username email")
-    .populate("moderators", "username");
+    .select("name roomCode host participants moderators joinRequests videoUrl videoQueue playbackState currentTime lastPlaybackUpdate createdAt")
+    .populate("host", "username")
+    .populate("participants", "username")
+    .populate("moderators", "username")
+    .populate("videoQueue.addedBy", "username");
 
   if (!room) {
     throw new ApiError(404, "Room not found");
   }
 
+  const currentUserId = req.user._id.toString();
+  const isParticipant = room.participants.some(
+    (participant) => participant._id.toString() === currentUserId,
+  );
+  const isHost = room.host._id.toString() === currentUserId;
+  const joinRequest = room.joinRequests.find(
+    (request) => request.user.toString() === currentUserId,
+  );
+  const data = {
+    _id: room._id,
+    name: isParticipant ? room.name : "Private room",
+    roomCode: room.roomCode,
+    host: isParticipant ? room.host : null,
+    participantCount: isParticipant ? room.participants.length : null,
+    participants: isParticipant ? room.participants : [],
+    moderators: isParticipant ? room.moderators : [],
+    videoUrl: isParticipant ? room.videoUrl : "",
+    videoQueue: isParticipant ? room.videoQueue : [],
+    playbackState: isParticipant ? room.playbackState : "paused",
+    currentTime: isParticipant ? room.currentTime : 0,
+    lastPlaybackUpdate: isParticipant ? room.lastPlaybackUpdate : null,
+    isParticipant,
+    isHost,
+    joinRequestStatus: joinRequest?.status || null,
+    createdAt: room.createdAt,
+  };
+
   return res
     .status(200)
-    .json(new ApiResponse(200, room, "Room fetched successfully"));
+    .json(new ApiResponse(200, data, "Room fetched successfully"));
 });
 
 // request to joih room
@@ -100,6 +148,16 @@ const requestToJoin = asyncHandler(async (req, res) => {
   }
 
   await room.save();
+
+  const joinRequest = room.joinRequests.find(
+    (request) => request.user.toString() === userId.toString(),
+  );
+  getIO().to(userChannel(room.host.toString())).emit("join-request-received", {
+    roomCode: room.roomCode,
+    requestId: joinRequest._id,
+    user: { _id: userId, username: req.user.username },
+    requestedAt: joinRequest.requestedAt,
+  });
 
   return res
     .status(200)
@@ -189,6 +247,11 @@ const handleJoinRequest = asyncHandler(async (req, res) => {
   }
 
   await room.save();
+  getIO().to(userChannel(room.host.toString())).emit("join-request-updated", {
+    roomCode: room.roomCode,
+    requestId: joinRequest._id,
+    status: joinRequest.status,
+  });
   // add socket
   // Socket.IO actions only when request is approved
   if (action === "approve") {
@@ -353,11 +416,18 @@ const transferHost = asyncHandler(async (req, res) => {
   }
 
   // 6. Transfer ownership
+  const previousHostId = room.host.toString();
   room.host = newHostId;
   room.moderators = room.moderators.filter(
     (id) => id.toString() !== newHostId.toString(),
   );
   await room.save();
+
+  getIO().to(roomChannel(room.roomCode)).emit("host-transferred", {
+    roomCode: room.roomCode,
+    previousHostId,
+    newHostId: room.host.toString(),
+  });
 
   return res
     .status(200)
@@ -534,6 +604,7 @@ export const getRoomMessages = asyncHandler(async (req, res) => {
   const [messages, totalMessages] = await Promise.all([
     Message.find({ room: room._id })
       .populate("sender", "username")
+      .populate("reactions.user", "username")
       .sort({ createdAt: -1, _id: -1 })
       .skip(skip)
       .limit(limit)
@@ -565,6 +636,7 @@ export const getRoomMessages = asyncHandler(async (req, res) => {
 });
 export {
   createRoom,
+  getMyRooms,
   getRoom,
   handleJoinRequest,
   getJoinRequests,

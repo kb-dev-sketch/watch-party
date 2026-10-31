@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   createRoom,
+  getMyRooms,
   getRoom,
   requestToJoin,
   getJoinRequests,
@@ -16,6 +17,7 @@ import { verifyJWT } from "../middleware/auth.middleware.js";
 const router = Router();
 
 router.post("/", verifyJWT, createRoom);
+router.get("/mine", verifyJWT, getMyRooms);
 router.get("/:roomCode", verifyJWT, getRoom);
 router.delete("/:roomCode/leave", verifyJWT, leaveRoom);
 // Participant sends a join request
