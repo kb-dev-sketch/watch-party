@@ -1,24 +1,26 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, LockKeyhole, Mail, UserRound } from "lucide-react";
+import { ArrowLeft, Mail, UserRound } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { getApiError } from "../lib/api";
 
 export default function Signup() {
   const { register } = useAuth();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ username: "", email: "", password: "" });
+  const [form, setForm] = useState({ username: "", email: "" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   const change = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
   const submit = async (event) => {
     event.preventDefault(); setError(""); setBusy(true);
-    try { await register(form); navigate("/verify-email", { replace: true, state: { email: form.email.trim() } }); }
+    try { await register(form); navigate("/verify-email", { replace: true, state: { email: form.email.trim(), username: form.username.trim() } }); }
     catch (requestError) {
       const message = getApiError(requestError);
       if (message.toLowerCase().includes("could not send verification email")) {
-        navigate("/verify-email", { replace: true, state: { email: form.email.trim(), notice: message } });
+        navigate("/verify-email", { replace: true, state: { email: form.email.trim(), username: form.username.trim(), error: message } });
+      } else if (message.toLowerCase().includes("email is already registered; verify it")) {
+        navigate("/verify-email", { replace: true, state: { email: form.email.trim(), username: form.username.trim(), notice: "Verify that you own this email, then choose your username and password." } });
       } else setError(message);
     }
     finally { setBusy(false); }
@@ -37,8 +39,6 @@ export default function Signup() {
           <span className="field-icon"><UserRound size={16} /><input id="username" name="username" className="input-dark" autoComplete="username" value={form.username} onChange={change} minLength={3} maxLength={30} pattern="[A-Za-z0-9_]+" placeholder="Choose a username" required /></span>
           <label htmlFor="email">Email address</label>
           <span className="field-icon"><Mail size={16} /><input id="email" name="email" className="input-dark" type="email" autoComplete="email" value={form.email} onChange={change} placeholder="you@example.com" required /></span>
-          <label htmlFor="password">Password</label>
-          <span className="field-icon"><LockKeyhole size={16} /><input id="password" name="password" className="input-dark" type="password" autoComplete="new-password" value={form.password} onChange={change} minLength={8} maxLength={72} placeholder="At least 8 characters" required /></span>
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="button button-primary button-full" disabled={busy}>{busy ? "Creating account…" : "Create account"}</button>
         </form>

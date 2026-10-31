@@ -42,6 +42,14 @@ const sendOTP = async (user) => {
   }
 
   const otp = generateOTP();
+  const previousOtpState = {
+    hash: user.emailVerificationOtpHash,
+    expiresAt: user.emailVerificationOtpExpiresAt,
+    sentAt: user.emailVerificationOtpSentAt,
+    windowStartedAt: user.emailVerificationOtpWindowStartedAt,
+    sendCount: user.emailVerificationOtpSendCount,
+    failedAttempts: user.emailVerificationOtpFailedAttempts,
+  };
   user.emailVerificationOtpHash = hashOTP(user._id, otp);
   user.emailVerificationOtpExpiresAt = new Date(now.getTime() + OTP_TTL_MS);
   user.emailVerificationOtpSentAt = now;
@@ -53,10 +61,19 @@ const sendOTP = async (user) => {
   try {
     await sendVerificationEmail({ email: user.email, username: user.username, otp });
   } catch (error) {
-    user.emailVerificationOtpHash = null;
-    user.emailVerificationOtpExpiresAt = null;
+    user.emailVerificationOtpHash = previousOtpState.hash;
+    user.emailVerificationOtpExpiresAt = previousOtpState.expiresAt;
+    user.emailVerificationOtpSentAt = previousOtpState.sentAt;
+    user.emailVerificationOtpWindowStartedAt = previousOtpState.windowStartedAt;
+    user.emailVerificationOtpSendCount = previousOtpState.sendCount;
+    user.emailVerificationOtpFailedAttempts = previousOtpState.failedAttempts;
     await user.save();
-    console.error("Verification email delivery failed:", error.message);
+    console.error("Verification email delivery failed:", {
+      message: error.message,
+      code: error.code,
+      responseCode: error.responseCode,
+      command: error.command,
+    });
     throw new ApiError(503, "Could not send verification email. Please try again later");
   }
 };
@@ -80,14 +97,13 @@ const getSafeUser = (user) => ({
 
 // POST /api/v1/auth/register
 export const registerUser = asyncHandler(async (req, res) => {
-  const { username, email, password } = req.body ?? {};
+  const { username, email } = req.body ?? {};
 
   if (
     typeof username !== "string" ||
-    typeof email !== "string" ||
-    typeof password !== "string"
+    typeof email !== "string"
   ) {
-    throw new ApiError(400, "Username, email and password are required");
+    throw new ApiError(400, "Username and email are required");
   }
 
   const normalizedUsername = username.trim().toLowerCase();
@@ -102,13 +118,6 @@ export const registerUser = asyncHandler(async (req, res) => {
 
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
     throw new ApiError(400, "Please enter a valid email address");
-  }
-
-  if (password.length < 8 || Buffer.byteLength(password, "utf8") > 72) {
-    throw new ApiError(
-      400,
-      "Password must be at least 8 characters and no more than 72 UTF-8 bytes",
-    );
   }
 
   const existingEmail = await User.findOne({ email: normalizedEmail }).select(
@@ -127,7 +136,8 @@ export const registerUser = asyncHandler(async (req, res) => {
   const user = existingEmail || await User.create({
     username: normalizedUsername,
     email: normalizedEmail,
-    password,
+    // This placeholder is replaced by the email owner during OTP verification.
+    password: randomBytes(32).toString("base64url"),
   });
 
   await sendOTP(user);
@@ -145,9 +155,15 @@ export const registerUser = asyncHandler(async (req, res) => {
 
 // POST /api/v1/auth/verify-email
 export const verifyEmail = asyncHandler(async (req, res) => {
-  const { email, otp } = req.body ?? {};
+  const { email, otp, username, password } = req.body ?? {};
   if (typeof email !== "string" || typeof otp !== "string" || !/^\d{6}$/.test(otp)) {
     throw new ApiError(400, "A valid email and 6-digit verification code are required");
+  }
+  if (typeof password !== "string" || password.length < 8 || Buffer.byteLength(password, "utf8") > 72) {
+    throw new ApiError(400, "Set a password with at least 8 characters and no more than 72 UTF-8 bytes");
+  }
+  if (typeof username !== "string" || !/^[a-z0-9_]{3,30}$/i.test(username.trim())) {
+    throw new ApiError(400, "Username must be 3-30 characters and contain only letters, numbers or underscores");
   }
 
   const user = await User.findOne({ email: email.trim().toLowerCase() }).select(
@@ -157,7 +173,7 @@ export const verifyEmail = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Verification code is invalid or expired");
   }
   if (user.emailVerificationOtpFailedAttempts >= OTP_ATTEMPT_LIMIT) {
-    throw new ApiError(429, "Too many incorrect codes. Request a new verification code");
+    throw new ApiError(400, "Verification code is invalid or expired");
   }
   if (!user.emailVerificationOtpExpiresAt || user.emailVerificationOtpExpiresAt <= new Date()) {
     user.emailVerificationOtpHash = null;
@@ -166,29 +182,56 @@ export const verifyEmail = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Verification code is invalid or expired");
   }
 
+  const normalizedUsername = username.trim().toLowerCase();
+  const usernameTaken = await User.exists({ username: normalizedUsername, _id: { $ne: user._id } });
+  if (usernameTaken) throw new ApiError(409, "Username is already taken. Choose another username");
+
   const candidate = Buffer.from(hashOTP(user._id, otp), "hex");
   const expected = Buffer.from(user.emailVerificationOtpHash, "hex");
   if (candidate.length !== expected.length || !timingSafeEqual(candidate, expected)) {
-    user.emailVerificationOtpFailedAttempts += 1;
-    if (user.emailVerificationOtpFailedAttempts >= OTP_ATTEMPT_LIMIT) {
-      user.emailVerificationOtpHash = null;
-      user.emailVerificationOtpExpiresAt = null;
+    const updatedUser = await User.findOneAndUpdate(
+      {
+        _id: user._id,
+        isEmailVerified: false,
+        emailVerificationOtpHash: user.emailVerificationOtpHash,
+        emailVerificationOtpFailedAttempts: { $lt: OTP_ATTEMPT_LIMIT },
+      },
+      { $inc: { emailVerificationOtpFailedAttempts: 1 } },
+      { new: true },
+    ).select("+emailVerificationOtpFailedAttempts");
+    if (updatedUser?.emailVerificationOtpFailedAttempts >= OTP_ATTEMPT_LIMIT) {
+      await User.updateOne(
+        { _id: user._id, emailVerificationOtpHash: user.emailVerificationOtpHash },
+        { $set: { emailVerificationOtpHash: null, emailVerificationOtpExpiresAt: null } },
+      );
     }
-    await user.save();
     throw new ApiError(400, "Verification code is invalid or expired");
   }
 
-  user.isEmailVerified = true;
-  user.emailVerificationOtpHash = null;
-  user.emailVerificationOtpExpiresAt = null;
-  user.emailVerificationOtpSentAt = null;
-  user.emailVerificationOtpWindowStartedAt = null;
-  user.emailVerificationOtpSendCount = 0;
-  user.emailVerificationOtpFailedAttempts = 0;
-  await user.save();
+  const verifiedUser = await User.findOneAndUpdate(
+    {
+      _id: user._id,
+      isEmailVerified: false,
+      emailVerificationOtpHash: user.emailVerificationOtpHash,
+      emailVerificationOtpExpiresAt: { $gt: new Date() },
+      emailVerificationOtpFailedAttempts: { $lt: OTP_ATTEMPT_LIMIT },
+    },
+    { $set: { emailVerificationOtpHash: null, emailVerificationOtpExpiresAt: null } },
+    { new: true },
+  ).select("+sessionVersion");
+  if (!verifiedUser) throw new ApiError(400, "Verification code is invalid or expired");
 
-  res.cookie(COOKIE_NAME, createToken(user), getCookieOptions());
-  return res.status(200).json(new ApiResponse(200, { user: getSafeUser(user) }, "Email verified successfully"));
+  verifiedUser.isEmailVerified = true;
+  verifiedUser.username = normalizedUsername;
+  verifiedUser.password = password;
+  verifiedUser.emailVerificationOtpSentAt = null;
+  verifiedUser.emailVerificationOtpWindowStartedAt = null;
+  verifiedUser.emailVerificationOtpSendCount = 0;
+  verifiedUser.emailVerificationOtpFailedAttempts = 0;
+  await verifiedUser.save();
+
+  res.cookie(COOKIE_NAME, createToken(verifiedUser), getCookieOptions());
+  return res.status(200).json(new ApiResponse(200, { user: getSafeUser(verifiedUser) }, "Email verified and password set successfully"));
 });
 
 // POST /api/v1/auth/forgot-password
@@ -249,11 +292,13 @@ export const resetPassword = asyncHandler(async (req, res) => {
   }
 
   const tokenHash = createHash("sha256").update(token).digest("hex");
-  const user = await User.findOne({
+  const user = await User.findOneAndUpdate({
     passwordResetTokenHash: tokenHash,
     passwordResetExpiresAt: { $gt: new Date() },
     isEmailVerified: true,
-  }).select("+password +passwordResetTokenHash +passwordResetExpiresAt +passwordResetSentAt +passwordResetWindowStartedAt +passwordResetSendCount +sessionVersion");
+  }, {
+    $set: { passwordResetTokenHash: null, passwordResetExpiresAt: null },
+  }, { new: true }).select("+password +sessionVersion");
   if (!user) throw new ApiError(400, "Password reset link is invalid or expired");
 
   user.password = password;
@@ -280,7 +325,14 @@ export const resendOtp = asyncHandler(async (req, res) => {
   const user = await User.findOne({ email: email.trim().toLowerCase() }).select(
     "+emailVerificationOtpHash +emailVerificationOtpExpiresAt +emailVerificationOtpSentAt +emailVerificationOtpWindowStartedAt +emailVerificationOtpSendCount +emailVerificationOtpFailedAttempts",
   );
-  if (user && !user.isEmailVerified) await sendOTP(user);
+  if (user && !user.isEmailVerified) {
+    try {
+      await sendOTP(user);
+    } catch (error) {
+      // Keep the public response identical for unknown, throttled, and mail-failure cases.
+      if (![429, 503].includes(error.statusCode)) throw error;
+    }
+  }
 
   return res.status(200).json(new ApiResponse(200, null, "If the account needs verification, a code has been sent"));
 });
